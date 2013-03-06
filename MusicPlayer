@@ -1,0 +1,431 @@
+package com.example.musicplayer;
+
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.app.AlertDialog;
+import android.app.Notification;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.ContentResolver;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
+import android.database.Cursor;
+import android.graphics.Color;
+import android.support.v4.app.Fragment;
+import android.support.v4.app.FragmentActivity;
+import android.support.v4.app.FragmentManager;
+import android.support.v4.app.FragmentTransaction;
+import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.EditText;
+import android.widget.ListView;
+import android.widget.RelativeLayout;
+import android.widget.Toast;
+
+public class MusicPlayer extends FragmentActivity 
+        implements GridViewFragment.OnGridViewItemSelectedListener,
+            SongListFragment.Refresh, BottomButtonsFragment.ShowLRC {
+    
+  private static final int DIALOG_0 =              0;
+    private static final int DIALOG_1 =              1;
+	
+    private static int mode_num =                    1;
+    
+    public final int TOTAL_SONG =                    0;
+    public final int LASTEST =                       1;
+    public final int MYLOVE =                        2;
+    public final int ALBUM =                         3;
+    public final int SINGER =                        4;
+    public final int FILES =                         5;
+    public final int NEWLIST =                       6;
+    private MediaPlayer player =                  null;
+    public static Cursor cursor =                 null;
+	AlertDialog dialog =                          null;
+	private Handler sleepTimeHandler =            null;
+	private static MusicPlayer mInstance =        null;
+	private String title =                        null;
+	public int position;
+	private int flag;
+	private ListView listView;
+	private View background;
+	private CharSequence[] items;
+	private SharedPreferences sp;
+	private MyApplication mApp;
+	private Fragment view_above_bottom, view_gridview, view_totalsong, view_mylove, bottom_view, view_lrc;
+	public static char[] isFavourite;
+	FragmentManager fragmentManager;
+    FragmentTransaction fragmentTransaction;
+	
+    private Runnable mRunnable = new Runnable() {
+        @Override
+        public void run() {
+            exitAPP();
+        }
+    };
+    
+	static MusicPlayer getInstance() {
+        return mInstance;
+    }
+	
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        Log.v("franco-MusicPlayer", "--------->onCreate()");
+        setContentView(R.layout.activity_music_player); 
+        
+        background = (RelativeLayout)findViewById(R.id.fragment_holo);
+        background.setBackgroundResource(R.drawable.img_list_background);
+        
+        ContentResolver contentResolver = getContentResolver();
+        Uri uri = android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+        cursor = contentResolver.query(uri, null, null, null, android.provider.MediaStore.Audio.Media.DEFAULT_SORT_ORDER);
+        int length = cursor.getCount() + 1;
+        isFavourite = new char[length];
+        for(int i=0; i<length; i++) {
+            isFavourite[i] = '0';
+        }
+        sp = getSharedPreferences("favourite", 0);
+        String tmp = sp.getString("favourite", "");
+        Log.v("franco", "tmp = " + tmp);
+        if(tmp!="" && tmp!=isFavourite.toString()) {
+            isFavourite = tmp.toCharArray();
+        }
+        initFragment(savedInstanceState);
+        showNotification();
+        mInstance = this;
+    }
+
+    @Override
+    protected void onPause() {
+        // TODO Auto-generated method stub
+        super.onPause();
+        Log.v("franco-MusicPlayer", "--------->onPause()");
+    }
+
+    @Override
+    protected void onStop() {
+        // TODO Auto-generated method stub
+        super.onStop();
+        Log.v("franco-MusicPlayer", "--------->onStop()");
+    }
+
+    @Override
+    protected void onResume() {
+        // TODO Auto-generated method stub
+        super.onResume();
+        Log.v("franco-MusicPlayer", "--------->onResume()");
+    }
+    
+    @Override
+    protected void onStart() {
+    	super.onStart();
+    	items = getResources().getTextArray(R.array.mode);
+    	Log.v("franco-MusicPlayer", "--------->onStart()");
+    	mApp = (MyApplication)getApplication(); 
+    	if(mApp.isExit() == true) {
+    	    mApp.setExit(false);//初始化为false，不然不能启动activity
+    		finish();
+    	}
+    }
+    
+    @Override
+    public void onBackPressed() {
+        // TODO Auto-generated method stub
+        super.onBackPressed();
+        Log.v("franco-MusicPlayer", "onBackPressed------>");
+        background.setBackgroundResource(R.drawable.img_list_background);
+        flag--;
+        if(listView != null) {
+            refresh(listView);
+        }
+        if(flag == 0) {
+            view_above_bottom = view_gridview;
+        }
+    }
+
+    @Override
+    protected  void onDestroy() {
+        Log.v("franco-MusicPlayer", "onDestroy()");
+        mInstance = null;
+        player = MusicService.getPlayer();
+        if(!(player != null && player.isPlaying())) {
+            clearNotification();//不再播放歌曲，则清除通知栏上的通知
+        }
+        super.onDestroy();
+    }
+         
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        //getMenuInflater().inflate(R.menu.activity_music_player, menu);
+        /*
+         * add()方法的四个参数：依次是：
+         * 1、组别，如果不分组的话就写Menu.NONE
+         * 2、Id,这个很重要，Android根据这个Id来确定不同的菜单
+         * 3、顺序，选项在菜单中的顺序由这个参数的大小决定
+         * 4、文本，显示菜单的内容
+         */
+        //setIcon()方法为菜单设置图标，android.R开头的资源是系统提供的，我们自己提供的资源是以R开头的
+         menu.add(Menu.NONE, 1, 1, R.string.play_mode)
+         .setIcon(android.R.drawable.ic_media_ff);
+         menu.add(Menu.NONE, 2, 2, R.string.set_sleeping_time)
+         .setIcon(R.drawable.time);
+         menu.add(Menu.NONE, 3, 3, R.string.exit)
+         .setIcon(android.R.drawable.ic_menu_close_clear_cancel);   
+         return true;
+    }
+    
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch(item.getItemId()) {
+        
+        case 1:
+            show(DIALOG_0);
+            break;
+            
+        case 2:
+            show(DIALOG_1);
+            break;
+            
+        case 3:
+            exitAPP();
+            return super.onOptionsItemSelected(item);
+            
+        default:
+            break;          
+        }
+        return false;
+    }
+    
+    private void show(int id) {
+        switch(id) {
+        case DIALOG_0:
+            SharedPreferences sp = getSharedPreferences("num", MODE_PRIVATE);
+            mode_num = sp.getInt("mode_num", mode_num);//获取上一次的播放模式
+            Log.v("franco", "1------mode_num = " + mode_num);
+            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            builder.setIcon(android.R.drawable.btn_radio)
+            .setCancelable(true)
+            .setTitle(R.string.play_mode)
+            .setSingleChoiceItems(items, mode_num, 
+                    new DialogInterface.OnClickListener() {
+                //带单选按钮的列表，这里多了一个参数mode_num，默认显示上一次的选则，-1表示不选中
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    dialog.dismiss();//选定播放模式后让对话框消失
+                    Toast.makeText(MusicPlayer.this, "" + items[which], 
+                            Toast.LENGTH_LONG).show();
+                    mode_num = which;
+
+                    SharedPreferences sp = getSharedPreferences("num", MODE_PRIVATE);
+                    Editor editor = sp.edit();
+                    editor.putInt("mode_num", mode_num);
+                    editor.commit();
+                }
+            })
+            .create()
+            .show();
+            break;
+            
+        case DIALOG_1:
+            final EditText input = new EditText(this);
+            SharedPreferences sp1 = getSharedPreferences("sleeptime", 0);
+            input.setText("" + sp1.getInt("sleep_time", 0));
+            AlertDialog.Builder builder1 = new AlertDialog.Builder(this);
+            builder1.setTitle(R.string.input_sleep_waiting_time)
+            .setView(input)
+            .setPositiveButton(R.string.positive_button, 
+                    new DialogInterface.OnClickListener () {
+                public void onClick(DialogInterface dialog, int whichButton) {
+                    String value = input.getText().toString();
+                    if(value.equals("")) {
+                        Toast.makeText(MusicPlayer.this, R.string.no_time_input, 
+                                Toast.LENGTH_LONG).show();
+                    } else {
+                        int time;
+                        try {
+                            time = Integer.parseInt(value);
+                            if(time <= 0) {
+                                Toast.makeText(MusicPlayer.this, R.string.negative_time_number, 
+                                        Toast.LENGTH_LONG).show();
+                                return;
+                            } else {
+                                Toast.makeText(MusicPlayer.this, 
+                                        getString(R.string.will_exit_after, time), 
+                                        Toast.LENGTH_LONG).show();
+                                SharedPreferences sp = getSharedPreferences("sleeptime", 0);
+                                Editor edit = sp.edit();
+                                edit.putInt("sleep_time", time);
+                                edit.commit();
+                                setSleepTime(time);
+                            }
+                        } catch (NumberFormatException ex) {
+                            Toast.makeText(MusicPlayer.this, R.string.wrong_input, 
+                                    Toast.LENGTH_LONG).show();
+                        }
+                    }
+                }
+            })
+            .setNegativeButton(R.string.negative_button, 
+                    new DialogInterface.OnClickListener () {
+                public void onClick(DialogInterface dialog, int whichButton) { }
+            })
+            .create()
+            .show();
+            break;
+            
+        default: 
+            break;
+        }
+    }
+     
+    private void setSleepTime(int time) { 
+        if(sleepTimeHandler != null) {
+            sleepTimeHandler.removeCallbacks(mRunnable);
+        }
+        sleepTimeHandler = new Handler();
+        sleepTimeHandler.postDelayed(mRunnable, time * 1000 * 60);
+    }
+    
+    private void initFragment(Bundle savedInstanceState) {
+        if(findViewById(R.id.fragment_above_bottom) != null) {
+            if (savedInstanceState != null) {
+                return;
+            }
+            Log.v("fragmen", "=null");
+            fragmentManager = getSupportFragmentManager();
+            fragmentTransaction = fragmentManager.beginTransaction();
+            view_gridview = new GridViewFragment(this);
+            view_above_bottom = view_gridview;
+            fragmentTransaction.add(R.id.fragment_above_bottom, view_gridview).commit();
+        }
+        
+        /*if(findViewById(R.id.fragment_top_buttons) != null) {
+            if (savedInstanceState != null) {
+                return;
+            }
+            fragmentManager = getSupportFragmentManager();
+            fragmentTransaction = fragmentManager.beginTransaction();
+            top_view = new TopButtonsFragment();
+            fragmentTransaction.add(R.id.fragment_top_buttons, top_view).commit();
+        }*/
+        
+        if(findViewById(R.id.fragment_bottom_buttons) != null) {
+            if (savedInstanceState != null) {
+                return;
+            }
+            fragmentManager = getSupportFragmentManager();
+            fragmentTransaction = fragmentManager.beginTransaction();
+            bottom_view = new BottomButtonsFragment(this);
+            fragmentTransaction.add(R.id.fragment_bottom_buttons, bottom_view).commit();
+        }
+        
+        view_totalsong = new SongListFragment(this, TOTAL_SONG);
+        view_mylove = new SongListFragment(this, MYLOVE);
+        view_lrc = new LRCFragment(this, background);
+    }
+    
+    @Override
+    public void showLRC() {
+        // TODO Auto-generated method stub
+        Log.v("franco->mid_view", "flag = " + flag);
+        flag++;
+        fragmentManager = getSupportFragmentManager();
+        fragmentManager.beginTransaction()
+        .remove(view_above_bottom)
+        .remove(bottom_view)
+        .add(R.id.fragment_holo, view_lrc)
+        .setCustomAnimations(android.R.animator.fade_in, android.R.animator.fade_out)
+        .addToBackStack(null)
+        .commit();
+    }
+    
+    @Override
+    public void onGridViewItemSelected(int arg) {
+        // TODO Auto-generated method stub
+        //flag++; 注意这步不应该是在这
+        fragmentManager = getSupportFragmentManager();
+        fragmentTransaction = fragmentManager.beginTransaction();  
+        switch(arg) {
+        case TOTAL_SONG:
+            flag++;
+            fragmentTransaction 
+            .remove(view_gridview)
+            .add(R.id.fragment_above_bottom, view_totalsong)
+            .setCustomAnimations(android.R.animator.fade_in, android.R.animator.fade_out)
+            .addToBackStack(null)
+            .commit();
+            view_above_bottom = view_totalsong;
+            break;
+            
+        case LASTEST:
+            break;
+            
+        case MYLOVE:
+            /*fragmentTransaction 
+            .remove(view_gridview)
+            .add(R.id.fragment_above_bottom, view_mylove)
+            .setCustomAnimations(android.R.animator.fade_in, android.R.animator.fade_out)
+            .addToBackStack(null)
+            .commit();*/
+            break;
+        }
+    }
+    
+    @Override
+    public void refresh(ListView listview) {
+        listView = listview;//listView只在back时有用
+        sp = getSharedPreferences("title", 0);
+        position = sp.getInt("position", 0);
+        if(position > 0)
+            position = position - 1;
+        listview.setSelection(position);
+    }
+    
+    @SuppressWarnings("deprecation")
+    private void showNotification() {
+        NotificationManager notificationManager = (NotificationManager) 
+            getSystemService(NOTIFICATION_SERVICE);
+        Notification notification = new Notification();
+        notification.icon = R.drawable.notify;
+        notification.flags |= Notification.FLAG_ONGOING_EVENT;//将此通知放到通知栏的"Ongoing"即"正在运行"组中
+        notification.flags |= Notification.FLAG_NO_CLEAR;//点击通知栏中的"清除通知"后，通知不清除
+        notification.flags |= Notification.FLAG_SHOW_LIGHTS;
+        notification.defaults = Notification.DEFAULT_LIGHTS;
+        notification.ledARGB = Color.BLUE;
+        notification.ledOnMS = 5000;
+        
+        sp = getSharedPreferences("title", 0);
+        title = sp.getString("title", "");
+        
+        CharSequence contentTitle = "天籁之音"; // 通知栏标题
+        CharSequence contentText = title; // 通知栏内容
+        Intent notificationIntent = new Intent(this, MusicPlayer.class); // 点击该通知后要跳转的Activity
+        PendingIntent contentItent = PendingIntent.getActivity(this, 0,
+                notificationIntent, 0);
+        notification.setLatestEventInfo(this, contentTitle, contentText,
+                contentItent);
+        // 把Notification传递给NotificationManager
+        notificationManager.notify(0, notification);
+    }
+    
+    private void clearNotification() {
+        NotificationManager notificationManager = (NotificationManager)
+            getSystemService(NOTIFICATION_SERVICE);
+        notificationManager.cancel(0);
+    }
+ 
+    private void exitAPP() {
+        if(mApp.getServiceIntent() != null) {
+            stopService(mApp.getServiceIntent());
+        }
+        finish();//会调用onDestroy()
+        Log.v("franco", "exitAPP()");
+    }
+    
+}
